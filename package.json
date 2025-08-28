@@ -1,6 +1,13 @@
 {
   "dependencies": {
-    "axios": "^1.11.0"
+    "@azure-tools/azcopy-node": "^3.4.7",
+    "axios": "^1.11.0",
+    "fast-speedtest-api": "^0.3.2",
+    "fs": "^0.0.1-security",
+    "http": "^0.0.1-security",
+    "https": "^1.0.0",
+    "inquirer": "^12.9.4",
+    "terminal-kit": "^3.1.2"
   },
   "scripts": {
     "start": "node src/index.js"
