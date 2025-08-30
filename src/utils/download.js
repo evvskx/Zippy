@@ -187,17 +187,14 @@ class Downloader {
             this.fileFd = null;
 
             const elapsed = (Date.now() - this.startTime) / 1000;
-            const sha256sum = this.hash.digest("hex");
             const avgSpeedBytesPerSec = this.downloadedBytes / elapsed;
 
             logger.success(`\nDownload completed: ${finalPath}`);
-            logger.success(`SHA256: ${sha256sum}`);
             logger.success(`Average speed: ${this.formatSpeed(avgSpeedBytesPerSec)}`);
             logger.success(`Total time: ${elapsed.toFixed(1)}s`);
 
             return { 
-                filename: finalPath, 
-                sha256: sha256sum, 
+                filename: finalPath,
                 size: this.downloadedBytes, 
                 avgSpeed: avgSpeedBytesPerSec, 
                 duration: elapsed 
