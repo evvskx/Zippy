@@ -1,6 +1,6 @@
 # 🚀 Zippy (WIP)
 
-A simple and fast way to download multiple OS ISOs.
+A hassle-free way to download multiple OS ISOs
 
 ## 🔧 How to run
 
