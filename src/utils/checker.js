@@ -1,32 +1,70 @@
 const axios = require("axios");
 const logger = require("./logger");
 
-const checkISO = async (isoData) => {
-    const valid = {};
+const checkISO = async (isoData = null) => {
+    if (!isoData) {
+        const iso = require("../data/options.json");
+        isoData = iso;
+    }
 
-    for (const [arch, systems] of Object.entries(isoData)) {
-        valid[arch] = {};
-        for (const [osName, versions] of Object.entries(systems)) {
-            const validVersions = {};
-            for (const [version, url] of Object.entries(versions)) {
-                try {
-                    const response = await axios.head(url, { timeout: 5000, validateStatus: () => true });
-                    if (response.status === 200 || response.status === 304) {
-                        validVersions[version] = url;
-                    } else {
-                        logger.warning(`${osName} - ${version} (${url}) returned status ${response.status}`);
+    const requests = [];
+    const validISOs = {};
+
+    for (const [arch, osEntries] of Object.entries(isoData)) {
+        validISOs[arch] = {};
+        
+        for (const [osName, distributions] of Object.entries(osEntries)) {
+            validISOs[arch][osName] = {};
+            
+            for (const [distroName, url] of Object.entries(distributions)) {
+                requests.push((async () => {
+                    try {
+                        const response = await axios.head(url, {
+                            timeout: 5000,
+                            maxRedirects: 5,
+                            validateStatus: () => true
+                        });
+
+                        if (response.status === 200 || response.status === 304) {
+                            let finalUrl = url;
+
+                            if (response.request?.res?.responseUrl) {
+                                finalUrl = response.request.res.responseUrl;
+                            }
+
+                            validISOs[arch][osName][distroName] = finalUrl;
+                        } else {
+                            logger.warning(`${arch}/${osName}/${distroName} - ${url} returned status ${response.status}`);
+                        }
+                    } catch (err) {
+                        logger.error(`${arch}/${osName}/${distroName}'s download not available (${err.message})`);
                     }
-                } catch (err) {
-                    logger.error(`${osName} - ${version} not available (${err.message})`);
-                }
-            }
-            if (Object.keys(validVersions).length > 0) {
-                valid[arch][osName] = validVersions;
+                })());
             }
         }
     }
 
-    return valid;
+    await Promise.all(requests);
+    
+    for (const [arch, osEntries] of Object.entries(validISOs)) {
+        for (const [osName, distributions] of Object.entries(osEntries)) {
+            if (Object.keys(distributions).length === 0) {
+                delete validISOs[arch][osName];
+            }
+        }
+        if (Object.keys(validISOs[arch]).length === 0) {
+            delete validISOs[arch];
+        }
+    }
+    
+    return validISOs;
 };
 
 module.exports = { checkISO };
+
+if (require.main === module) {
+    (async () => {
+        const validISOs = await checkISO();
+        console.log("Valid ISOs:", validISOs);
+    })();
+}
