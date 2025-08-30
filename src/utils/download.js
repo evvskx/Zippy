@@ -4,6 +4,7 @@ const path = require("path");
 const { URL } = require("url");
 const { HTTP1Downloader } = require("./download/http1");
 const { HTTP2Downloader } = require("./download/http2");
+const { terminal } = require("terminal-kit");
 
 const CHUNK_SIZE = 256 * 1024;
 const PARALLEL_CONNECTIONS = 8;
@@ -120,6 +121,8 @@ class Downloader {
     }
 
     async download() {
+        terminal.clear();
+
         logger.info(`Starting download: ${this.url}`);
         
         const downloadsDir = path.join(process.cwd(), 'downloads');
