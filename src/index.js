@@ -30,5 +30,6 @@ term.on('key', (name) => {
 
     if (selectedISO) {
         await download.downloadISO(selectedISO.url, selectedISO.name);
+        process.exit();
     }
 })();
