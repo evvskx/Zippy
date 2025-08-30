@@ -1,26 +1,31 @@
-const fs = require("fs");
-const path = require("path");
 const os = require("os");
 const term = require("terminal-kit").terminal;
 const logger = require("./logger");
+const { checkISO } = require("./checker");
+const iso = require("../data/options.json");
 
 class Menu {
     constructor() {
         this.architecture_bits = os.arch().includes('64') ? 'amd_64' : 'i386';
-        const options = JSON.parse(fs.readFileSync(path.join(__dirname, "../data/options.json"), "utf8"));
-        this.options = options[this.architecture_bits] || {};
+        this.options = {};
+    }
+
+    async loadOptions() {
+        logger.info("Checking available ISOs...");
+        const validISOs = await checkISO(iso);
+        this.options = validISOs[this.architecture_bits] || {};
     }
 
     async selectOS() {
         const osChoices = Object.keys(this.options);
         if (!osChoices.length) {
-            logger.error(`No operating systems found for ${this.architecture_bits}.`);
+            logger.error(`No valid operating systems found for ${this.architecture_bits}.`);
             return null;
         }
 
         const numberedOSChoices = osChoices.map((os, i) => `${i + 1}. ${os.charAt(0).toUpperCase() + os.slice(1)}`);
 
-        const selectedOS = await new Promise(resolve => {
+        return new Promise(resolve => {
             term.gridMenu(numberedOSChoices, { exitOnUnexpectedKey: true, columns: 3 }, (error, response) => {
                 if (error || !response) {
                     resolve(null);
@@ -29,42 +34,36 @@ class Menu {
                 }
             });
         });
-
-        return selectedOS;
     }
 
     async selectISO(selectedOS) {
         const choices = Object.keys(this.options[selectedOS]);
         if (!choices.length) {
-            logger.error(`No ISOs found for ${selectedOS} on ${this.architecture_bits}.`);
+            logger.error(`No valid ISOs found for ${selectedOS} on ${this.architecture_bits}.`);
             return null;
         }
 
         const numberedChoices = choices.map((ch, i) => `${i + 1}. ${ch}`);
 
-        const selected = await new Promise(resolve => {
+        return new Promise(resolve => {
             term.gridMenu(numberedChoices, { exitOnUnexpectedKey: true, columns: 3 }, (error, response) => {
                 if (error || !response) {
                     resolve(null);
                 } else {
-                    resolve(choices[response.selectedIndex]);
+                    resolve({ name: choices[response.selectedIndex], url: this.options[selectedOS][choices[response.selectedIndex]] });
                 }
             });
         });
-
-        if (!selected) return null;
-
-        const url = this.options[selectedOS][selected];
-        return { name: selected, url };
     }
 
     async menu() {
         logger.info(`Architecture: ${this.architecture_bits}`);
-
         term.clear();
+
+        await this.loadOptions();
+
         logger.info("Select Operating System:");
         const selectedOS = await this.selectOS();
-        
         if (!selectedOS) {
             logger.info("No operating system selected.");
             return null;
@@ -72,9 +71,7 @@ class Menu {
 
         term.clear();
         logger.info("Select ISO version:");
-        const selectedISO = await this.selectISO(selectedOS);
-
-        return selectedISO;
+        return await this.selectISO(selectedOS);
     }
 }
 
