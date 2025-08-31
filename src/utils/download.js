@@ -6,7 +6,7 @@ const https = require("https");
 const { terminal } = require("terminal-kit");
 const logger = require("./logger");
 
-const CHUNK_SIZE = 2 * 1024 * 1024; // 2 MB per connessione
+const CHUNK_SIZE = 2 * 1024 * 1024; 
 const MAX_CONNECTIONS = 4;
 const PROGRESS_UPDATE_INTERVAL = 100;
 
@@ -119,7 +119,6 @@ class MultiDownloader {
     }
 
     async download() {
-        terminal.clear();
         logger.info("Starting download: " + this.url);
         const downloadsDir = path.join(process.cwd(), 'downloads');
         const finalPath = path.join(downloadsDir, path.basename(this.filename));
