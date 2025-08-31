@@ -57,7 +57,7 @@
       "Linux Mint 21.3 Xfce": "https://mirror.rackspace.com/linuxmint/iso/stable/21.3/linuxmint-21.3-xfce-64bit.iso",
       "Linux Mint 6 Cinnamon": "https://mirror.rackspace.com/linuxmint/iso/debian/lmde-6-cinnamon-64bit.iso",
       "Debian 13.0.0": "https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/debian-13.0.0-amd64-netinst.iso",
-      "Arch Linux 2025.08": "https://mirror.arizona.edu/archlinux/iso/latest/archlinux-2025.08.01-x86_64.iso",
+      "Arch Linux 2025.08": "https://mirror.rackspace.com/archlinux/iso/2025.08.01/archlinux-2025.08.01-x86_64.iso",
       "Arch Linux 2025.07": "https://archive.archlinux.org/iso/2025.07.01/archlinux-2025.07.01-x86_64.iso",
       "Arch Linux 2025.06": "https://archive.archlinux.org/iso/2025.06.01/archlinux-2025.06.01-x86_64.iso",
       "Arch Linux 2025.05": "https://archive.archlinux.org/iso/2025.05.01/archlinux-2025.05.01-x86_64.iso",
