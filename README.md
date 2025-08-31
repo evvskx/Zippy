@@ -2,6 +2,14 @@
 
 A hassle-free way to download multiple OS ISOs
 
+## Linux Distros to add:
+* Fedora
+* openSUSE
+* Manjaro
+* Elementary OS
+* Zorin OS
+* Pop!_OS
+
 ## 🔧 How to run
 
 ### 1. Clone the repository
