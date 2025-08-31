@@ -1,6 +1,6 @@
 {
   "amd_64": {
-    "linux": {
+    "Linux": {
       "Ubuntu Desktop 4.10": "https://old-releases.ubuntu.com/releases/warty/warty-release-install-amd64.iso",
       "Ubuntu Desktop 5.04": "https://old-releases.ubuntu.com/releases/hoary/ubuntu-5.04-install-amd64.iso",
       "Ubuntu Desktop 5.10": "https://old-releases.ubuntu.com/releases/breezy/ubuntu-5.10-install-amd64.iso",
@@ -118,7 +118,7 @@
     }
   },
   "i386": {
-    "linux": {
+    "Linux": {
       "Ubuntu Desktop 4.10": "https://old-releases.ubuntu.com/releases/warty/warty-release-install-i386.iso",
       "Ubuntu Desktop 5.04": "https://old-releases.ubuntu.com/releases/hoary/ubuntu-5.04-install-i386.iso",
       "Ubuntu Desktop 5.10": "https://old-releases.ubuntu.com/releases/breezy/ubuntu-5.10-install-i386.iso",
