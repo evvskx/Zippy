@@ -142,7 +142,6 @@ class MultiDownloader {
 
 
     async download() {
-        logger.info("Starting download: " + this.url);
         const downloadsDir = path.join(process.cwd(), 'downloads');
         this.finalPath = path.join(downloadsDir, path.basename(this.filename));
         fs.mkdirSync(downloadsDir, { recursive: true });
