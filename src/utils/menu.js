@@ -2,6 +2,7 @@ const os = require("os");
 const term = require("terminal-kit").terminal;
 const logger = require("./logger");
 const { checkISO } = require("./checker");
+const WindowsDownloader = require("./windows");
 
 class Menu {
     constructor() {
@@ -75,120 +76,31 @@ class Menu {
         return str + ' '.repeat(Math.max(0, width - len));
     }
 
-    async displayPaginatedMenu(choices, title) {
-        this.termWidth = term.width;
-        this.termHeight = term.height;
-        const ITEMS_PER_PAGE = this.calculateItemsPerPage();
-        const totalPages = Math.ceil(choices.length / ITEMS_PER_PAGE);
-        let currentPage = 0;
-        let selectedIdx = 0;
+    async selectOS() {
+        const osChoices = Object.keys(this.options);
+        if (!osChoices.length) return null;
+        if (osChoices.length === 1) return osChoices[0];
+        const sortedChoices = osChoices.sort(this.compareDistros.bind(this));
+        const groupedChoices = this.groupByDistribution(sortedChoices);
+        const flatChoices = this.flattenGroupedChoices(groupedChoices);
+        const choice = await this.displayPaginatedMenu(flatChoices, "Select Operating System");
+        if (choice === "Windows") {
+            const windows = new WindowsDownloader();
+            const arch = this.architecture_bits.includes("64") ? "64-bit" : "32-bit";
+            return await windows.menu(arch);
+        }
+        return choice;
+    }
 
-        const renderPage = () => {
-            term.moveTo(1, 1);
-            term.eraseDisplayBelow();
-            term.bold.brightCyan(`\n╔════════════════════════════════════════════════════════════════════════╗\n`);
-            term.bold.brightCyan(`║`).bold.white(this.padRight(` ${title}`, 72)).bold.brightCyan(`║\n`);
-            term.bold.brightCyan(`╚════════════════════════════════════════════════════════════════════════╝\n\n`);
-            const startIdx = currentPage * ITEMS_PER_PAGE;
-            const endIdx = Math.min(startIdx + ITEMS_PER_PAGE, choices.length);
-            const pageChoices = choices.slice(startIdx, endIdx);
-            const cols = Math.min(5, Math.floor(this.termWidth / 30));
-            const rows = Math.ceil(pageChoices.length / cols);
-            for (let row = 0; row < rows; row++) {
-                let rowText = '';
-                for (let col = 0; col < cols; col++) {
-                    const idx = col * rows + row;
-                    if (idx < pageChoices.length) {
-                        const globalIdx = startIdx + idx;
-                        const choice = pageChoices[idx];
-                        const display = globalIdx === selectedIdx ? `> ${choice}` : `  ${choice}`;
-                        rowText += this.padRight(display, 30);
-                    }
-                }
-                term(rowText + '\n');
-            }
-            term.bold.brightYellow(`\n┌────────────────────────────────────────────────────────────────────────┐\n`);
-            term.bold.brightYellow(`│`).white(this.padRight(` Page ${currentPage + 1} of ${totalPages} | Items ${startIdx + 1}-${endIdx} of ${choices.length}`, 72)).bold.brightYellow(`│\n`);
-            term.bold.brightYellow(`└────────────────────────────────────────────────────────────────────────┘\n\n`);
-            term.brightBlue("←").white(" | ");
-            term.brightBlue("→").white(" | ");
-            term.brightBlue("↑").white(" | ");
-            term.brightBlue("↓").white(" | ");
-            term.brightGreen("V").white(" Select | ");
-            term.brightRed("X").white(" Cancel\n\n");
-        };
-
-        renderPage();
-        term.grabInput(true);
-        const resizeHandler = () => renderPage();
-        process.stdout.on('resize', resizeHandler);
-
-        return new Promise(resolve => {
-            term.on('key', (name) => {
-                const startIdx = currentPage * ITEMS_PER_PAGE;
-                const endIdx = Math.min(startIdx + ITEMS_PER_PAGE, choices.length);
-                const pageChoices = choices.slice(startIdx, endIdx);
-                const cols = Math.min(5, Math.floor(this.termWidth / 30));
-                const rows = Math.ceil(pageChoices.length / cols);
-
-                const localIdx = selectedIdx - startIdx;
-                let row = localIdx % rows;
-                let col = Math.floor(localIdx / rows);
-
-                if (name === 'LEFT') {
-                    if (col > 0) col--;
-                    else if (currentPage > 0) {
-                        currentPage--;
-                        const prevPageCount = Math.min(ITEMS_PER_PAGE, choices.length - (currentPage * ITEMS_PER_PAGE));
-                        const prevCols = Math.min(5, Math.floor(this.termWidth / 30));
-                        const prevRows = Math.ceil(prevPageCount / prevCols);
-                        col = prevCols - 1;
-                        row = Math.min(row, prevRows - 1);
-                    }
-                }
-                if (name === 'RIGHT') {
-                    if (col < cols - 1 && (col + 1) * rows + row < pageChoices.length) col++;
-                    else if (currentPage < totalPages - 1) {
-                        currentPage++;
-                        col = 0;
-                        row = 0;
-                    }
-                }
-                if (name === 'UP') {
-                    if (row > 0) row--;
-                    else if (currentPage > 0) {
-                        currentPage--;
-                        const prevPageCount = Math.min(ITEMS_PER_PAGE, choices.length - (currentPage * ITEMS_PER_PAGE));
-                        const prevCols = Math.min(5, Math.floor(this.termWidth / 30));
-                        const prevRows = Math.ceil(prevPageCount / prevCols);
-                        row = prevRows - 1;
-                    }
-                }
-                if (name === 'DOWN') {
-                    if (row < rows - 1 && col * rows + row + 1 < pageChoices.length) row++;
-                    else if (currentPage < totalPages - 1) {
-                        currentPage++;
-                        row = 0;
-                    }
-                }
-
-                selectedIdx = currentPage * ITEMS_PER_PAGE + col * rows + row;
-                if (selectedIdx >= choices.length) selectedIdx = choices.length - 1;
-
-                if (['LEFT','RIGHT','UP','DOWN'].includes(name)) renderPage();
-                if (name === 'ENTER') {
-                    const choice = choices[selectedIdx];
-                    process.stdout.off('resize', resizeHandler);
-                    term.grabInput(false);
-                    resolve(choice);
-                }
-                if (name === 'ESC') {
-                    process.stdout.off('resize', resizeHandler);
-                    term.grabInput(false);
-                    resolve(null);
-                }
-            });
-        });
+    async selectISO(selectedOS) {
+        if (selectedOS && selectedOS.version) return selectedOS;
+        const choices = Object.keys(this.options[selectedOS]);
+        if (!choices.length) return null;
+        if (choices.length === 1) return { name: choices[0], url: this.options[selectedOS][choices[0]] };
+        const sortedChoices = choices.sort(this.compareDistros.bind(this));
+        const selectedChoice = await this.displayPaginatedMenu(sortedChoices, `Select ISO for ${selectedOS}: ${this.architecture_bits}`);
+        if (!selectedChoice) return null;
+        return { name: selectedChoice, url: this.options[selectedOS][selectedChoice] };
     }
 
     groupByDistribution(choices) {
@@ -213,39 +125,6 @@ class Menu {
         return flatChoices;
     }
 
-    async selectOS() {
-        const osChoices = Object.keys(this.options);
-        if (!osChoices.length) return null;
-        if (osChoices.length === 1) {
-            const singleChoice = osChoices[0];
-            term.moveTo(1,1);
-            term.eraseDisplayBelow();
-            return singleChoice;
-        }
-        const sortedChoices = osChoices.sort(this.compareDistros.bind(this));
-        const groupedChoices = this.groupByDistribution(sortedChoices);
-        const flatChoices = this.flattenGroupedChoices(groupedChoices);
-        return await this.displayPaginatedMenu(flatChoices, "Select Operating System");
-    }
-
-    async selectISO(selectedOS) {
-        const choices = Object.keys(this.options[selectedOS]);
-        if (!choices.length) return null;
-        if (choices.length === 1) {
-            const singleChoice = choices[0];
-            term.moveTo(1,1);
-            term.eraseDisplayBelow();
-            term.bold.brightGreen(`\nV Found single ISO: `).bold.white(`${singleChoice}\n`);
-            term.bold.white("Proceeding with this ISO...\n");
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            return { name: singleChoice, url: this.options[selectedOS][singleChoice] };
-        }
-        const sortedChoices = choices.sort(this.compareDistros.bind(this));
-        const selectedChoice = await this.displayPaginatedMenu(sortedChoices, `Select ISO for ${selectedOS}`);
-        if (!selectedChoice) return null;
-        return { name: selectedChoice, url: this.options[selectedOS][selectedChoice] };
-    }
-
     async menu() {
         logger.info(`Architecture: ${this.architecture_bits}`);
         await this.loadOptions();
@@ -264,8 +143,13 @@ class Menu {
         if (result) {
             term.moveTo(1,1);
             term.eraseDisplayBelow();
-            term.bold.brightGreen(`\nV Selected: `).bold.white(`${result.name}\n`);
-            term.bold.brightBlue(`  URL: `).white(`${result.url}\n\n`);
+            if (result.version) {
+                term.bold.brightGreen(`\nV Selected Windows: `).bold.white(`${result.version} ${result.edition} ${result.arch} ${result.lang}\n`);
+                term.bold.brightBlue(`  URL: `).white(`${result.url}\n\n`);
+            } else {
+                term.bold.brightGreen(`\nV Selected: `).bold.white(`${result.name}\n`);
+                term.bold.brightBlue(`  URL: `).white(`${result.url}\n\n`);
+            }
         } else {
             term.brightRed("X No ISO version selected.\n");
         }
