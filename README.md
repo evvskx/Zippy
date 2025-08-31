@@ -35,3 +35,4 @@ npm start
 * Zippy is still **Work In Progress**: some features may not be fully implemented.
 * I do not plan on adding MacOS' ISOs since it requires certain tools that are only available for Mac themselves. I will not use any link regarding archives ecc. unless valid checksums are given.
 * The ISO files given are **Desktop Only**. Server ISO files will be available in the future.
+* When choosing Linux, you will only see distros that are compatible with your CPU's architecture.
