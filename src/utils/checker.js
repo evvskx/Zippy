@@ -1,10 +1,14 @@
 const axios = require("axios");
 const logger = require("./logger");
 
-const checkISO = async (isoData = null) => {
-    if (!isoData) {
-        const iso = require("../data/options.json");
-        isoData = iso;
+const checkISO = async (isoUrl = "https://evvskx.github.io/Zippy/urls.json") => {
+    let isoData;
+    try {
+        const response = await axios.get(isoUrl, { timeout: 5000 });
+        isoData = response.data;
+    } catch (err) {
+        logger.error(`Failed to load ISO data from ${isoUrl} (${err.message})`);
+        return {};
     }
 
     const requests = [];
@@ -12,21 +16,21 @@ const checkISO = async (isoData = null) => {
 
     for (const [arch, osEntries] of Object.entries(isoData)) {
         validISOs[arch] = {};
-        
+
         for (const [osName, distributions] of Object.entries(osEntries)) {
             validISOs[arch][osName] = {};
-            
-            for (const [distroName, url] of Object.entries(distributions)) {
+
+            for (const [distroName, distroUrl] of Object.entries(distributions)) {
                 requests.push((async () => {
                     try {
-                        const response = await axios.head(url, {
+                        const response = await axios.head(distroUrl, {
                             timeout: 5000,
                             maxRedirects: 5,
                             validateStatus: () => true
                         });
 
                         if (response.status === 200 || response.status === 304) {
-                            let finalUrl = url;
+                            let finalUrl = distroUrl;
 
                             if (response.request?.res?.responseUrl) {
                                 finalUrl = response.request.res.responseUrl;
@@ -34,10 +38,10 @@ const checkISO = async (isoData = null) => {
 
                             validISOs[arch][osName][distroName] = finalUrl;
                         } else {
-                            logger.warning(`${arch}/${osName}/${distroName} - ${url} returned status ${response.status}`);
+                            logger.warning(`${arch}/${osName}/${distroName} - ${distroUrl} returned status ${response.status}`);
                         }
                     } catch (err) {
-                        logger.error(`${arch}/${osName}/${distroName}'s download not available (${err.message})`);
+                        logger.error(`${arch}/${osName}/${distroName} download not available (${err.message})`);
                     }
                 })());
             }
@@ -45,7 +49,7 @@ const checkISO = async (isoData = null) => {
     }
 
     await Promise.all(requests);
-    
+
     for (const [arch, osEntries] of Object.entries(validISOs)) {
         for (const [osName, distributions] of Object.entries(osEntries)) {
             if (Object.keys(distributions).length === 0) {
@@ -56,7 +60,7 @@ const checkISO = async (isoData = null) => {
             delete validISOs[arch];
         }
     }
-    
+
     return validISOs;
 };
 

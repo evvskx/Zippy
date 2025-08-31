@@ -2,7 +2,6 @@ const os = require("os");
 const term = require("terminal-kit").terminal;
 const logger = require("./logger");
 const { checkISO } = require("./checker");
-const iso = require("../data/options.json");
 
 class Menu {
     constructor() {
@@ -57,7 +56,8 @@ class Menu {
 
     async loadOptions() {
         logger.info("Checking available ISOs...");
-        const validISOs = await checkISO(iso);
+        const isoUrl = "https://evvskx.github.io/Zippy/urls.json";
+        const validISOs = await checkISO(isoUrl);
         const archData = validISOs[this.architecture_bits];
         if (!archData) {
             logger.error(`No ISOs found for architecture: ${this.architecture_bits}`);
