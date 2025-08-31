@@ -22,6 +22,13 @@ class MultiDownloader {
         this.parsedUrl = new URL(this.url);
         this.isHttps = this.parsedUrl.protocol === 'https:';
         this.fileFd = null;
+        this.finalPath = null;
+        this.interrupted = false;
+        process.on('exit', () => this.cleanup());
+        process.on('SIGINT', () => {
+            this.interrupted = true;
+            process.exit();
+        });
     }
 
     getRequestModule() {
@@ -45,19 +52,25 @@ class MultiDownloader {
     }
 
     formatBytes(bytes) {
-        if (bytes === 0) return '0 B';
-        const k = 1024;
-        const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-        const i = Math.floor(Math.log(bytes) / Math.log(k));
-        return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        let i = 0;
+        let num = bytes;
+        while (num >= 1024 && i < units.length - 1) {
+            num /= 1024;
+            i++;
+        }
+        return num.toFixed(1) + ' ' + units[i];
     }
 
     formatSpeed(bytesPerSecond) {
-        if (bytesPerSecond === 0) return '0 B/s';
-        const k = 1024;
-        const sizes = ['B/s', 'KB/s', 'MB/s', 'GB/s', 'TB/s'];
-        const i = Math.floor(Math.log(bytesPerSecond) / Math.log(k));
-        return parseFloat((bytesPerSecond / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+        const units = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
+        let i = 0;
+        let num = bytesPerSecond;
+        while (num >= 1024 && i < units.length - 1) {
+            num /= 1024;
+            i++;
+        }
+        return num.toFixed(1) + ' ' + units[i];
     }
 
     formatETA(seconds) {
@@ -79,11 +92,9 @@ class MultiDownloader {
         const speed = this.downloadedBytes / elapsed;
         const percent = this.downloadedBytes / this.totalBytes;
         const eta = (this.totalBytes - this.downloadedBytes) / (speed || 1);
-
         const barLength = 30;
         const filled = Math.min(barLength, Math.floor(percent * barLength));
         const bar = "=".repeat(filled) + " ".repeat(barLength - filled);
-
         const progressText = `[${bar}] ${this.formatBytes(this.downloadedBytes)} / ${this.formatBytes(this.totalBytes)} | ${this.formatSpeed(speed)} | ETA: ${this.formatETA(eta)}`;
         process.stdout.write('\r' + progressText + ' '.repeat(Math.max(0, (this.lastProgressLength || 0) - progressText.length)));
         this.lastProgressLength = progressText.length;
@@ -101,7 +112,10 @@ class MultiDownloader {
     downloadChunk(start, end) {
         return new Promise((resolve, reject) => {
             const options = {
-                headers: { Range: `bytes=${start}-${end}` },
+                headers: { 
+                    Range: `bytes=${start}-${end}`,
+                    'Cache-Control': 'no-cache'
+                },
             };
             const req = this.getRequestModule().get(this.url, options, res => {
                 if (res.statusCode >= 400) return reject(new Error(`HTTP ${res.statusCode}`));
@@ -121,9 +135,9 @@ class MultiDownloader {
     async download() {
         logger.info("Starting download: " + this.url);
         const downloadsDir = path.join(process.cwd(), 'downloads');
-        const finalPath = path.join(downloadsDir, path.basename(this.filename));
+        this.finalPath = path.join(downloadsDir, path.basename(this.filename));
         fs.mkdirSync(downloadsDir, { recursive: true });
-        this.fileFd = fs.openSync(finalPath, 'w');
+        this.fileFd = fs.openSync(this.finalPath, 'w');
 
         const { length, acceptsRanges } = await this.getHeaders();
         this.totalBytes = length;
@@ -151,11 +165,20 @@ class MultiDownloader {
         }
 
         fs.closeSync(this.fileFd);
-        const elapsed = (Date.now() - this.startTime) / 1000;
-        console.log("");
-        logger.success(`Download completed: ${finalPath}`);
-        logger.success(`Average speed: ${this.formatSpeed(this.downloadedBytes / elapsed)}`);
-        logger.success(`Total time: ${elapsed.toFixed(1)}s`);
+        if (!this.interrupted) {
+            const elapsed = (Date.now() - this.startTime) / 1000;
+            console.log("");
+            logger.success(`Download completed: ${this.finalPath}`);
+            logger.success(`Average speed: ${this.formatSpeed(this.downloadedBytes / elapsed)}`);
+            logger.success(`Total time: ${elapsed.toFixed(1)}s`);
+        }
+    }
+
+    cleanup() {
+        if (this.interrupted && this.finalPath && fs.existsSync(this.finalPath)) {
+            fs.unlinkSync(this.finalPath);
+            logger.info("Download interrupted. Partial file deleted.");
+        }
     }
 }
 
