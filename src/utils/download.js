@@ -109,7 +109,7 @@ class MultiDownloader {
         }
     }
 
-    downloadChunk(start, end) {
+    downloadChunk(start, end, retries = 5) {
         return new Promise((resolve, reject) => {
             const options = {
                 headers: { 
@@ -128,9 +128,18 @@ class MultiDownloader {
                 });
                 res.on('end', resolve);
             });
-            req.on('error', reject);
+            req.on('error', async err => {
+                if (retries > 0) {
+                    logger.info(`Errore chunk ${start}-${end}, retry in corso... (${retries} tentativi rimasti)`);
+                    await new Promise(r => setTimeout(r, 1000));
+                    resolve(this.downloadChunk(start, end, retries - 1));
+                } else {
+                    reject(err);
+                }
+            });
         });
     }
+
 
     async download() {
         logger.info("Starting download: " + this.url);
