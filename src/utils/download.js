@@ -109,7 +109,7 @@ class MultiDownloader {
         }
     }
 
-    downloadChunk(start, end, retries = 5) {
+    downloadChunk(start, end, retries = 10) {
         return new Promise((resolve, reject) => {
             const options = {
                 headers: { 
