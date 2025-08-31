@@ -25,3 +25,4 @@ npm start
 ## 📌 Notes
 
 * Zippy is still **Work In Progress**: some features may not be fully implemented.
+* I do not plan on adding MacOS' ISOs since it requires certain tools that are only available for Mac themselves. I will not use any link regarding archives ecc. unless valid checksums are given.
