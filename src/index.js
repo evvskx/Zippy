@@ -3,7 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const term = require("terminal-kit").terminal;
 
-// load utils
+// load utils.
 fs.readdirSync(path.join(__dirname, "utils")).forEach(file => {
     if (file.endsWith(".js")) {
         const moduleName = path.basename(file, ".js");
