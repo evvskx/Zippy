@@ -20,8 +20,6 @@ term.on('key', (name) => {
     }
 });
 (async () => {
-    await checker.checkISO();
-
     logger.info("Resources loaded successfully.");
 
     term.clear();

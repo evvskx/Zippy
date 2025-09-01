@@ -10,7 +10,7 @@ const CHUNK_SIZE = 2 * 1024 * 1024;
 const MAX_CONNECTIONS = 4;
 const PROGRESS_UPDATE_INTERVAL = 100;
 
-class MultiDownloader {
+class Downloader {
     constructor(url, filename) {
         this.url = url;
         this.filename = filename + ".iso";
@@ -43,13 +43,23 @@ class MultiDownloader {
                 res => {
                     const length = parseInt(res.headers['content-length'] || '0', 10);
                     const acceptsRanges = res.headers['accept-ranges'] === 'bytes';
-                    resolve({ length, acceptsRanges });
+
+                    let filename = this.filename;
+                    const disposition = res.headers['content-disposition'];
+                    if (disposition && disposition.includes('filename=')) {
+                        filename = disposition.split('filename=')[1].replace(/["']/g, '');
+                    } else {
+                        filename = path.basename(urlObj.pathname);
+                    }
+
+                    resolve({ length, acceptsRanges, filename });
                 }
             );
             req.on('error', reject);
             req.end();
         });
     }
+
 
     formatBytes(bytes) {
         const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -143,12 +153,13 @@ class MultiDownloader {
 
     async download() {
         const downloadsDir = path.join(process.cwd(), 'downloads');
-        this.finalPath = path.join(downloadsDir, path.basename(this.filename));
         fs.mkdirSync(downloadsDir, { recursive: true });
-        this.fileFd = fs.openSync(this.finalPath, 'w');
 
-        const { length, acceptsRanges } = await this.getHeaders();
+        const { length, acceptsRanges, filename } = await this.getHeaders();
         this.totalBytes = length;
+        this.filename = filename;
+        this.finalPath = path.join(downloadsDir, this.filename);
+        this.fileFd = fs.openSync(this.finalPath, 'w');
 
         if (!acceptsRanges) {
             logger.info("Server doesn't support ranges, falling back to single connection.");
@@ -191,7 +202,7 @@ class MultiDownloader {
 }
 
 async function downloadISO(url, filename) {
-    const downloader = new MultiDownloader(url, filename);
+    const downloader = new Downloader(url, filename);
     return downloader.download();
 }
 

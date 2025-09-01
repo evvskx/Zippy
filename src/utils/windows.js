@@ -4,6 +4,43 @@ const term = require("terminal-kit").terminal;
 const logger = require("./logger");
 const net = require('net');
 const fs = require('fs');
+const { getValidProxy } = require("./proxy");
+let currentProxy = null;
+let proxyFailed = false;
+
+async function axiosWithProxy(url, options = {}) {
+    if (!proxyFailed && !currentProxy) {
+        try {
+            currentProxy = await getValidProxy(5000);
+        } catch (err) {
+            proxyFailed = true;
+        }
+    }
+
+    if (currentProxy && !proxyFailed) {
+        try {
+            const [host, port] = currentProxy.split(":");
+
+            const instance = axios.create({
+                ...options,
+                proxy: { host, port: parseInt(port) },
+                timeout: options.timeout || 60000
+            });
+
+            const response = await instance.get(url);
+            return response;
+        } catch (err) {
+            proxyFailed = true;
+        }
+    }
+
+    try {
+        const response = await axios.get(url, { ...options, timeout: options.timeout || 60000 });
+        return response;
+    } catch (err2) {
+        throw err2;
+    }
+}
 
 class WindowsDownloader {
     constructor(architecture, locale = "en-US") {
@@ -58,6 +95,7 @@ class WindowsDownloader {
             }
         ];
     }
+    
 
     loadTranslations() {
         const translations = {
@@ -221,10 +259,8 @@ class WindowsDownloader {
         try {
             const url = `https://vlscppe.microsoft.com/tags?org_id=${this.orgId}&session_id=${sessionId}`;
             logger.info(`Whitelisting session ID: ${sessionId}`);
-            await axios.get(url, { 
-                headers: this.headers, 
-                timeout: 10000 
-            });
+            await axiosWithProxy(url, { headers: this.headers, timeout: 10000 });
+
             return true;
         } catch (error) {
             logger.error(`Failed to whitelist session ID: ${error.message}`);
@@ -253,14 +289,12 @@ class WindowsDownloader {
                     `&Locale=${this.locale}` +
                     `&sessionID=${this.sessionIds[sessionIndex]}`;
 
-                logger.info(`MIGHT TAKE SOME TIME - Fetching languages for edition ${editionId}...`);
+                logger.info(`Fetching languages for edition ${editionId}...`);
                 let response = null;
                 while (!response) {
-                    response = await axios.get(url, { 
-                        headers: this.headers, 
-                        timeout: 30000 
-                    });
+                    response = await axiosWithProxy(url, { headers: this.headers, timeout: 60000 });
                 }
+
 
                 if (response.data.Errors && response.data.Errors.length > 0) {
                     throw new Error(response.data.Errors[0].Value);
@@ -311,14 +345,12 @@ class WindowsDownloader {
                     `&sessionID=${this.sessionIds[entry.sessionIndex]}`;
 
                 logger.info(`Getting download links for SKU ${entry.skuId}...`);
-                
-                const response = await axios.get(url, {
-                    headers: {
+
+                const response = await axiosWithProxy(url, { headers: {
                         ...this.headers,
                         'Referer': this.baseUrl + 'windows11'
-                    },
-                    timeout: 15000
-                });
+                    }, timeout: 60000 });
+
 
                 if (response.data.Errors && response.data.Errors.length > 0) {
                     if (response.data.Errors[0].Type === 9) {
@@ -349,10 +381,8 @@ class WindowsDownloader {
 
     async getCode715123130Message() {
         try {
-            const response = await axios.get(this.baseUrl + 'windows11', {
-                headers: this.headers,
-                timeout: 10000
-            });
+            const response = await axiosWithProxy(url + "windows11", { headers: this.headers, timeout: 10000 });
+
             const html = response.data;
             const msgMatch = html.match(/<input id="msg-01" type="hidden" value="([^"]+)"/);
             if (msgMatch && msgMatch[1]) {
