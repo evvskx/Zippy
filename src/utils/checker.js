@@ -4,7 +4,7 @@ const logger = require("./logger");
 const checkISO = async (isoUrl = "https://evvskx.github.io/Zippy/urls.json") => {
     let isoData;
     try {
-        const response = await axios.get(isoUrl, { timeout: 5000 });
+        const response = await axios.get(isoUrl, { timeout: 15000 });
         isoData = response.data;
     } catch (err) {
         logger.error(`Failed to load ISO data from ${isoUrl} (${err.message})`);

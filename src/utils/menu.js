@@ -116,8 +116,7 @@ class Menu {
             term.brightBlue("→").white(" | ");
             term.brightBlue("↑").white(" | ");
             term.brightBlue("↓").white(" | ");
-            term.brightGreen("V").white(" Select | ");
-            term.brightRed("X").white(" Cancel\n\n");
+            term.brightGreen("Enter").white(" Select \n\n");
         };
 
         renderPage();

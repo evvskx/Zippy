@@ -44,13 +44,18 @@ class Downloader {
                     const length = parseInt(res.headers['content-length'] || '0', 10);
                     const acceptsRanges = res.headers['accept-ranges'] === 'bytes';
 
-                    let filename = this.filename;
                     const disposition = res.headers['content-disposition'];
-                    if (disposition && disposition.includes('filename=')) {
-                        filename = disposition.split('filename=')[1].replace(/["']/g, '');
+                    let filename = this.filename;
+
+                    if (disposition) {
+                        const match = disposition.match(/filename[^;=\n]*=(?:UTF-8'')?["']?([^;"']+)["']?/i);
+                        if (match && match[1]) {
+                            filename = decodeURIComponent(match[1]);
+                        }
                     } else {
                         filename = path.basename(urlObj.pathname);
                     }
+
 
                     resolve({ length, acceptsRanges, filename });
                 }

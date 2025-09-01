@@ -5,42 +5,37 @@ const logger = require("./logger");
 const net = require('net');
 const fs = require('fs');
 const { getValidProxy } = require("./proxy");
+
 let currentProxy = null;
-let proxyFailed = false;
+let proxyAttempted = false;
 
 async function axiosWithProxy(url, options = {}) {
-    if (!proxyFailed && !currentProxy) {
-        try {
-            currentProxy = await getValidProxy(5000);
-        } catch (err) {
-            proxyFailed = true;
-        }
+    if (!proxyAttempted && !currentProxy) {
+        currentProxy = await getValidProxy(5000);
+        proxyAttempted = true;
     }
 
-    if (currentProxy && !proxyFailed) {
+    if (currentProxy) {
         try {
             const [host, port] = currentProxy.split(":");
-
             const instance = axios.create({
                 ...options,
                 proxy: { host, port: parseInt(port) },
                 timeout: options.timeout || 60000
             });
-
-            const response = await instance.get(url);
-            return response;
+            return await instance.get(url);
         } catch (err) {
-            proxyFailed = true;
+            currentProxy = null;
         }
     }
 
     try {
-        const response = await axios.get(url, { ...options, timeout: options.timeout || 60000 });
-        return response;
-    } catch (err2) {
-        throw err2;
+        return await axios.get(url, { ...options, timeout: options.timeout || 60000 });
+    } catch (err) {
+        return null;
     }
 }
+
 
 class WindowsDownloader {
     constructor(architecture, locale = "en-US") {
@@ -178,8 +173,7 @@ class WindowsDownloader {
             term.brightBlue("→").white(" | ");
             term.brightBlue("↑").white(" | ");
             term.brightBlue("↓").white(" | ");
-            term.brightGreen("Enter").white(" Select | ");
-            term.brightRed("Esc").white(" Cancel\n\n");
+            term.brightGreen("Enter").white(" Select\n\n");
         };
 
         renderPage();
