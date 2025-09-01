@@ -2,6 +2,14 @@
 
 A hassle-free way to download multiple OS ISOs
 
+## Linux Distros to add:
+* Fedora
+* openSUSE
+* Manjaro
+* Elementary OS
+* Zorin OS
+* Pop!_OS
+
 ## 🔧 How to run
 
 ### 1. Clone the repository
@@ -25,3 +33,7 @@ npm start
 ## 📌 Notes
 
 * Zippy is still **Work In Progress**: some features may not be fully implemented.
+* I do not plan on adding MacOS' ISOs since it requires certain tools that are only available for Mac themselves. I will not use any link regarding archives ecc. unless valid checksums are given.
+* The ISO files given are **Desktop Only**. Server ISO files will be available in the future.
+* When choosing Linux, you will only see distros that are compatible with your CPU's architecture.
+* If you recieve the error code 715-123130 when choosing Windows, you may be IP Banned. Try changing your IP by using a VPN, or just wait 'till a proxy is available.
