@@ -3,43 +3,15 @@ const { v4: uuidv4 } = require('uuid');
 const term = require("terminal-kit").terminal;
 const logger = require("./logger");
 const net = require('net');
-const fs = require('fs');
-const { getValidProxy } = require("./proxy");
 
-let currentProxy = null;
-let proxyAttempted = false;
-
-async function axiosWithProxy(url, options = {}) {
-    if (!proxyAttempted && !currentProxy) {
-        currentProxy = await getValidProxy(5000);
-        proxyAttempted = true;
-    }
-
-    if (currentProxy) {
-        try {
-            const [host, port] = currentProxy.split(":");
-            const instance = axios.create({
-                ...options,
-                proxy: { host, port: parseInt(port) },
-                timeout: options.timeout || 60000
-            });
-            return await instance.get(url);
-        } catch (err) {
-            currentProxy = null;
-        }
-    }
-
-    try {
-        return await axios.get(url, { ...options, timeout: options.timeout || 60000 });
-    } catch (err) {
-        return null;
-    }
+async function makeRequest(url, options = {}) {
+    try { return await axios.get(url, { ...options, timeout: options.timeout || 60000 }); }
+    catch(error) { return null };
 }
 
-
 class WindowsDownloader {
-    constructor(architecture, locale = "en-US") {
-        this.architecture = architecture;
+    constructor(locale = "en-US") {
+        this.architecture = null;
         this.locale = locale;
         this.baseUrl = "https://www.microsoft.com/" + locale + "/software-download/";
         this.orgId = "y6jn8c31";
@@ -253,7 +225,7 @@ class WindowsDownloader {
         try {
             const url = `https://vlscppe.microsoft.com/tags?org_id=${this.orgId}&session_id=${sessionId}`;
             logger.info(`Whitelisting session ID: ${sessionId}`);
-            await axiosWithProxy(url, { headers: this.headers, timeout: 10000 });
+            await makeRequest(url, { headers: this.headers, timeout: 10000 });
 
             return true;
         } catch (error) {
@@ -286,7 +258,7 @@ class WindowsDownloader {
                 logger.info(`Fetching languages for edition ${editionId}...`);
                 let response = null;
                 while (!response) {
-                    response = await axiosWithProxy(url, { headers: this.headers, timeout: 60000 });
+                    response = await makeRequest(url, { headers: this.headers, timeout: 60000 });
                 }
 
 
@@ -340,7 +312,7 @@ class WindowsDownloader {
 
                 logger.info(`Getting download links for SKU ${entry.skuId}...`);
 
-                const response = await axiosWithProxy(url, { headers: {
+                const response = await makeRequest(url, { headers: {
                         ...this.headers,
                         'Referer': this.baseUrl + 'windows11'
                     }, timeout: 60000 });
@@ -375,7 +347,7 @@ class WindowsDownloader {
 
     async getCode715123130Message() {
         try {
-            const response = await axiosWithProxy(url + "windows11", { headers: this.headers, timeout: 10000 });
+            const response = await makeRequest(url + "windows11", { headers: this.headers, timeout: 10000 });
 
             const html = response.data;
             const msgMatch = html.match(/<input id="msg-01" type="hidden" value="([^"]+)"/);

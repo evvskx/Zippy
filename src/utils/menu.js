@@ -6,7 +6,7 @@ const WindowsDownloader = require("./windows");
 
 class Menu {
     constructor() {
-        this.architecture_bits = os.arch().includes('64') ? 'amd_64' : 'i386';
+        this.architecture_bits = null;
         this.options = {};
         this.termWidth = term.width;
         this.termHeight = term.height;
@@ -56,20 +56,15 @@ class Menu {
     }
 
     async loadOptions() {
-        logger.info("Checking available ISOs...");
         const isoUrl = "https://evvskx.github.io/Zippy/urls.json";
-        const validISOs = await checkISO(isoUrl);
-        const archData = validISOs[this.architecture_bits];
-        if (!archData) {
-            logger.error(`No ISOs found for architecture: ${this.architecture_bits}`);
-            this.options = {};
-            return;
-        }
-        this.options = archData;
-        if (!this.options || Object.keys(this.options).length === 0) {
-            logger.error("No valid ISOs found for your architecture.");
-        }
-        this.options["Windows"] = "windows stinks";
+        const allISOs = await checkISO(isoUrl);
+        this.options = {
+            "Linux": {
+                "amd64": allISOs.amd_64.Linux,
+                "i386": allISOs.i386.Linux
+            },
+            "Windows": "windows stinks"
+        };
     }
 
     padRight(str, width) {
@@ -214,6 +209,15 @@ class Menu {
         return flatChoices;
     }
 
+    async selectArchitecture() {
+        const archChoices = ["32bit", "64bit"];
+        const selected = await this.displayPaginatedMenu(archChoices, "Select Architecture");
+        if (!selected) return null;
+        if (selected.includes("32")) return "i386";
+        if (selected.includes("64")) return "amd64";
+        return null;
+    }
+
     async selectOS() {
         const osChoices = Object.keys(this.options);
         if (!osChoices.length) return null;
@@ -230,7 +234,7 @@ class Menu {
     }
 
     async selectISO(selectedOS) {
-        const choices = Object.keys(this.options[selectedOS]);
+        const choices = Object.keys(this.options[selectedOS][this.architecture_bits]);
         if (!choices.length) return null;
         if (choices.length === 1) {
             const singleChoice = choices[0];
@@ -239,39 +243,42 @@ class Menu {
             term.bold.brightGreen(`\nV Found single ISO: `).bold.white(`${singleChoice}\n`);
             term.bold.white("Proceeding with this ISO...\n");
             await new Promise(resolve => setTimeout(resolve, 1000));
-            return { name: singleChoice, url: this.options[selectedOS][singleChoice] };
+            return { name: singleChoice, url: this.options[selectedOS][this.architecture_bits][singleChoice] };
         }
         const sortedChoices = choices.sort(this.compareDistros.bind(this));
         const selectedChoice = await this.displayPaginatedMenu(sortedChoices, `Select ISO for ${selectedOS}: ${this.architecture_bits}`);
         if (!selectedChoice) return null;
-        return { name: selectedChoice, url: this.options[selectedOS][selectedChoice] };
+        return { name: selectedChoice, url: this.options[selectedOS][this.architecture_bits][selectedChoice] };
     }
 
     async menu() {
-        logger.info(`Architecture: ${this.architecture_bits}`);
         await this.loadOptions();
-        const allChoices = Object.keys(this.options).sort(this.compareDistros.bind(this));
-        if (allChoices.length > 20) await this.displaySummary(allChoices);
-        term.moveTo(1,1);
-        term.eraseDisplayBelow();
-        const selectedOS = await this.selectOS();
-        if (!selectedOS) {
-            term.brightRed("X No operating system selected.\n");
+        const osChoices = Object.keys(this.options);
+        if (!osChoices.length) {
+            term.brightRed("X No operating systems available.\n");
             return null;
         }
 
-        if (selectedOS === "Windows") {
-            const windowsMenu = new WindowsDownloader(this.architecture_bits);
+        const selectedOS = await this.displayPaginatedMenu(osChoices, "Select Operating System");
+        if (!selectedOS) {
+            term.brightRed("X No operating system selected.\n");
+            return null;
+        } else if (selectedOS === "Windows") {
+            const windowsMenu = new WindowsDownloader();
             return await windowsMenu.menu();
+        } else {
+            this.architecture_bits = await this.selectArchitecture();
+            if (!this.architecture_bits) {
+                term.brightRed("X No architecture selected.\n");
+                return null;
+            }
         }
 
-        term.moveTo(1,1);
-        term.eraseDisplayBelow();
         const result = await this.selectISO(selectedOS);
         if (result) {
             term.moveTo(1,1);
             term.eraseDisplayBelow();
-            term.bold.brightGreen(`\nV Selected: `).bold.white(`${result.name}\n`);
+            term.bold.brightGreen(`\nv Selected: `).bold.white(`${result.name}\n`);
             term.bold.brightBlue(`  URL: `).white(`${result.url}\n\n`);
         } else {
             term.brightRed("X No ISO version selected.\n");

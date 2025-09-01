@@ -29,4 +29,7 @@ const success = (...args) =>
 const warning = (...args) =>
     console.warn(`${timestamp()} - ${colors.FgYellow}[WARNING]${colors.Reset} - ${colors.FgWhite}${args.join(" ")}${colors.Reset}`);
 
+const warn = (...args) =>
+    console.warn(`${timestamp()} - ${colors.FgYellow}[WARNING]${colors.Reset} - ${colors.FgWhite}${args.join(" ")}${colors.Reset}`);
+
 module.exports = { info, inlineInfo, error, success, warning };

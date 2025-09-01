@@ -4,7 +4,7 @@ const logger = require("./logger");
 const checkISO = async (isoUrl = "https://evvskx.github.io/Zippy/urls.json") => {
     let isoData;
     try {
-        const response = await axios.get(isoUrl, { timeout: 15000 });
+        const response = await axios.get(isoUrl, { timeout: 1500 });
         isoData = response.data;
     } catch (err) {
         logger.error(`Failed to load ISO data from ${isoUrl} (${err.message})`);
@@ -24,7 +24,7 @@ const checkISO = async (isoUrl = "https://evvskx.github.io/Zippy/urls.json") => 
                 requests.push((async () => {
                     try {
                         const response = await axios.head(distroUrl, {
-                            timeout: 5000,
+                            timeout: 2500,
                             maxRedirects: 5,
                             validateStatus: () => true
                         });
@@ -37,12 +37,8 @@ const checkISO = async (isoUrl = "https://evvskx.github.io/Zippy/urls.json") => 
                             }
 
                             validISOs[arch][osName][distroName] = finalUrl;
-                        } else {
-                            logger.warning(`${arch}/${osName}/${distroName} - ${distroUrl} returned status ${response.status}`);
-                        }
-                    } catch (err) {
-                        logger.error(`${arch}/${osName}/${distroName} download not available (${err.message})`);
-                    }
+                        } else {}
+                    } catch (err) {}
                 })());
             }
         }

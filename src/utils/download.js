@@ -3,12 +3,36 @@ const path = require("path");
 const { URL } = require("url");
 const http = require("http");
 const https = require("https");
-const { terminal } = require("terminal-kit");
 const logger = require("./logger");
 
-const CHUNK_SIZE = 2 * 1024 * 1024; 
-const MAX_CONNECTIONS = 4;
+const CHUNK_SIZE = 2 * 1024 * 1024;
+const MAX_CONNECTIONS = 5;
 const PROGRESS_UPDATE_INTERVAL = 100;
+
+class WriteQueue {
+    constructor(fd) {
+        this.fd = fd;
+        this.queue = [];
+        this.processing = false;
+    }
+    enqueue(buffer, position) {
+        return new Promise((resolve, reject) => {
+            this.queue.push({ buffer, position, resolve, reject });
+            this.process();
+        });
+    }
+    process() {
+        if (this.processing || this.queue.length === 0) return;
+        this.processing = true;
+        const { buffer, position, resolve, reject } = this.queue.shift();
+        fs.write(this.fd, buffer, 0, buffer.length, position, (err) => {
+            this.processing = false;
+            if (err) reject(err);
+            else resolve();
+            this.process();
+        });
+    }
+}
 
 class Downloader {
     constructor(url, filename) {
@@ -24,6 +48,9 @@ class Downloader {
         this.fileFd = null;
         this.finalPath = null;
         this.interrupted = false;
+        this.completed = false;
+        this.chunkStatus = new Map();
+        
         process.on('exit', () => this.cleanup());
         process.on('SIGINT', () => {
             this.interrupted = true;
@@ -43,20 +70,17 @@ class Downloader {
                 res => {
                     const length = parseInt(res.headers['content-length'] || '0', 10);
                     const acceptsRanges = res.headers['accept-ranges'] === 'bytes';
-
                     const disposition = res.headers['content-disposition'];
                     let filename = this.filename;
-
                     if (disposition) {
                         const match = disposition.match(/filename[^;=\n]*=(?:UTF-8'')?["']?([^;"']+)["']?/i);
-                        if (match && match[1]) {
-                            filename = decodeURIComponent(match[1]);
-                        }
+                        if (match && match[1]) filename = decodeURIComponent(match[1]);
                     } else {
-                        filename = path.basename(urlObj.pathname);
+                        const pathName = urlObj.pathname;
+                        if (pathName && pathName !== '/') {
+                            filename = path.basename(pathName) || this.filename;
+                        }
                     }
-
-
                     resolve({ length, acceptsRanges, filename });
                 }
             );
@@ -64,7 +88,6 @@ class Downloader {
             req.end();
         });
     }
-
 
     formatBytes(bytes) {
         const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -89,6 +112,8 @@ class Downloader {
     }
 
     formatETA(seconds) {
+        if (!isFinite(seconds) || seconds < 0) return "∞";
+        
         const d = Math.floor(seconds / 86400);
         const h = Math.floor((seconds % 86400) / 3600);
         const m = Math.floor((seconds % 3600) / 60);
@@ -104,19 +129,31 @@ class Downloader {
     updateProgress() {
         const now = Date.now();
         const elapsed = (now - this.startTime) / 1000;
+        
+        if (elapsed <= 0 || this.totalBytes <= 0) return;
+        
         const speed = this.downloadedBytes / elapsed;
-        const percent = this.downloadedBytes / this.totalBytes;
-        const eta = (this.totalBytes - this.downloadedBytes) / (speed || 1);
+        const percent = Math.min(1, this.downloadedBytes / this.totalBytes);
+        const remaining = Math.max(0, this.totalBytes - this.downloadedBytes);
+        const eta = speed > 0 ? remaining / speed : Infinity;
+        
         const barLength = 30;
         const filled = Math.min(barLength, Math.floor(percent * barLength));
         const bar = "=".repeat(filled) + " ".repeat(barLength - filled);
-        const progressText = `[${bar}] ${this.formatBytes(this.downloadedBytes)} / ${this.formatBytes(this.totalBytes)} | ${this.formatSpeed(speed)} | ETA: ${this.formatETA(eta)}`;
+        
+        const percentText = (percent * 100).toFixed(1) + '% |';
+        const progressText = `[${bar}] ${percentText} ${this.formatBytes(this.downloadedBytes)} / ${this.formatBytes(this.totalBytes)} | ${this.formatSpeed(speed)} | ETA: ${this.formatETA(eta)}`;
+        
         process.stdout.write('\r' + progressText + ' '.repeat(Math.max(0, (this.lastProgressLength || 0) - progressText.length)));
         this.lastProgressLength = progressText.length;
     }
 
     onProgressUpdate(bytes) {
         this.downloadedBytes += bytes;
+        if (this.downloadedBytes > this.totalBytes) {
+            this.downloadedBytes = this.totalBytes;
+        }
+        
         const now = Date.now();
         if (now - this.lastUpdate > PROGRESS_UPDATE_INTERVAL) {
             this.updateProgress();
@@ -124,82 +161,188 @@ class Downloader {
         }
     }
 
-    downloadChunk(start, end, retries = 10) {
+    downloadChunk(start, end, retries = 3) {
+        const chunkId = `${start}-${end}`;
+        
         return new Promise((resolve, reject) => {
-            const options = {
+            if (this.chunkStatus.has(chunkId)) {
+                return resolve();
+            }
+            
+            const options = { 
                 headers: { 
-                    Range: `bytes=${start}-${end}`,
-                    'Cache-Control': 'no-cache'
-                },
+                    Range: `bytes=${start}-${end}`, 
+                    'Cache-Control': 'no-cache',
+                    'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'
+                } 
             };
+            
             const req = this.getRequestModule().get(this.url, options, res => {
-                if (res.statusCode >= 400) return reject(new Error(`HTTP ${res.statusCode}`));
+                if (res.statusCode >= 400) {
+                    return reject(new Error(`HTTP ${res.statusCode} for chunk ${chunkId}`));
+                }
+                
+                let receivedBytes = 0;
+                let chunks = [];
+                
                 res.on('data', chunk => {
-                    fs.write(this.fileFd, chunk, 0, chunk.length, start, err => {
-                        if (err) reject(err);
-                        this.onProgressUpdate(chunk.length);
-                        start += chunk.length;
-                    });
+                    chunks.push(chunk);
+                    receivedBytes += chunk.length;
                 });
-                res.on('end', resolve);
+                
+                res.on('end', async () => {
+                    const expectedBytes = end - start + 1;
+                    const tolerance = Math.min(1024, expectedBytes * 0.01);
+                    if (receivedBytes >= expectedBytes - tolerance) {
+                        try {
+                            const buffer = Buffer.concat(chunks);
+                            await this.writeQueue.enqueue(buffer, start);
+                            this.onProgressUpdate(buffer.length);
+                            this.chunkStatus.set(chunkId, true);
+                            resolve();
+                        } catch (err) {
+                            reject(err);
+                        }
+                    } else if (retries > 0) {
+                        logger.warn(`Chunk ${chunkId} short by ${expectedBytes - receivedBytes} bytes, retrying (${retries} left)`);
+                        setTimeout(() => {
+                            resolve(this.downloadChunk(start, end, retries - 1));
+                        }, 1000);
+                    } else {
+                        logger.warn(`Chunk ${chunkId} incomplete but accepting (${receivedBytes}/${expectedBytes} bytes)`);
+                        try {
+                            const buffer = Buffer.concat(chunks);
+                            await this.writeQueue.enqueue(buffer, start);
+                            this.onProgressUpdate(buffer.length);
+                            this.chunkStatus.set(chunkId, true);
+                            resolve();
+                        } catch (err) {
+                            reject(err);
+                        }
+                    }
+                });
+                
+                res.on('error', (err) => {
+                    if (retries > 0) {
+                        setTimeout(() => {
+                            resolve(this.downloadChunk(start, end, retries - 1));
+                        }, 1000);
+                    } else {
+                        reject(err);
+                    }
+                });
             });
-            req.on('error', async err => {
+            
+            req.on('error', (err) => {
                 if (retries > 0) {
-                    logger.info(`Errore chunk ${start}-${end}, retry in corso... (${retries} tentativi rimasti)`);
-                    await new Promise(r => setTimeout(r, 1000));
-                    resolve(this.downloadChunk(start, end, retries - 1));
+                    setTimeout(() => {
+                        resolve(this.downloadChunk(start, end, retries - 1));
+                    }, 1000);
                 } else {
                     reject(err);
+                }
+            });
+            
+            req.setTimeout(30000, () => {
+                req.destroy();
+                if (retries > 0) {
+                    setTimeout(() => {
+                        resolve(this.downloadChunk(start, end, retries - 1));
+                    }, 1000);
+                } else {
+                    reject(new Error(`Timeout for chunk ${chunkId}`));
                 }
             });
         });
     }
 
-
     async download() {
-        const downloadsDir = path.join(process.cwd(), 'downloads');
-        fs.mkdirSync(downloadsDir, { recursive: true });
-
-        const { length, acceptsRanges, filename } = await this.getHeaders();
-        this.totalBytes = length;
-        this.filename = filename;
-        this.finalPath = path.join(downloadsDir, this.filename);
-        this.fileFd = fs.openSync(this.finalPath, 'w');
-
-        if (!acceptsRanges) {
-            logger.info("Server doesn't support ranges, falling back to single connection.");
-            await this.downloadChunk(0, this.totalBytes - 1);
-        } else {
-            const chunks = [];
-            for (let i = 0; i < this.totalBytes; i += CHUNK_SIZE) {
-                chunks.push([i, Math.min(i + CHUNK_SIZE - 1, this.totalBytes - 1)]);
-            }
-            const active = [];
-            while (chunks.length) {
-                while (active.length < MAX_CONNECTIONS && chunks.length) {
-                    const [start, end] = chunks.shift();
-                    const p = this.downloadChunk(start, end).finally(() => {
-                        active.splice(active.indexOf(p), 1);
-                    });
-                    active.push(p);
+        try {
+            const downloadsDir = path.join(process.cwd(), 'downloads');
+            fs.mkdirSync(downloadsDir, { recursive: true });
+            
+            const { length, acceptsRanges, filename } = await this.getHeaders();
+            
+            this.totalBytes = length;
+            this.filename = filename;
+            this.finalPath = path.join(downloadsDir, this.filename);
+            
+            
+            if (fs.existsSync(this.finalPath)) {
+                const stats = fs.statSync(this.finalPath);
+                if (Math.abs(stats.size - this.totalBytes) < 1024) {
+                    logger.success("File already exists and is complete!");
+                    return;
+                } else {
+                    logger.warn("Existing file is incomplete, redownloading...");
+                    fs.unlinkSync(this.finalPath);
                 }
-                await Promise.race(active);
             }
-            await Promise.all(active);
-        }
+            
+            this.fileFd = fs.openSync(this.finalPath, 'w');
+            this.writeQueue = new WriteQueue(this.fileFd);
+            
+            if (!acceptsRanges || this.totalBytes < CHUNK_SIZE) {
+                await this.downloadChunk(0, this.totalBytes - 1);
+            } else {
+                const chunks = [];
+                for (let i = 0; i < this.totalBytes; i += CHUNK_SIZE) {
+                    chunks.push([i, Math.min(i + CHUNK_SIZE - 1, this.totalBytes - 1)]);
+                }
+                
 
-        fs.closeSync(this.fileFd);
-        if (!this.interrupted) {
-            const elapsed = (Date.now() - this.startTime) / 1000;
-            console.log("");
-            logger.success(`Download completed: ${this.finalPath}`);
-            logger.success(`Average speed: ${this.formatSpeed(this.downloadedBytes / elapsed)}`);
-            logger.success(`Total time: ${elapsed.toFixed(1)}s`);
+                const active = [];
+                let chunkIndex = 0;
+                
+                while (chunkIndex < chunks.length && !this.interrupted) {
+                    while (active.length < MAX_CONNECTIONS && chunkIndex < chunks.length) {
+                        const [start, end] = chunks[chunkIndex++];
+                        const p = this.downloadChunk(start, end).finally(() => {
+                            const index = active.indexOf(p);
+                            if (index > -1) active.splice(index, 1);
+                        });
+                        active.push(p);
+                    }
+                    
+                    if (active.length > 0) {
+                        await Promise.race(active);
+                    }
+                }
+                
+                await Promise.all(active);
+            }
+            
+            fs.closeSync(this.fileFd);
+            
+            if (!this.interrupted) {
+                this.downloadedBytes = this.totalBytes;
+                this.updateProgress();
+                console.log("");
+                
+                const stats = fs.statSync(this.finalPath);
+                const sizeDiff = Math.abs(stats.size - this.totalBytes);
+                if (sizeDiff > 1024) {
+                    logger.warn(`File size difference: ${sizeDiff} bytes (expected: ${this.totalBytes}, got: ${stats.size})`);
+                }
+                
+                this.completed = true;
+                const elapsed = (Date.now() - this.startTime) / 1000;
+                logger.success(`Download completed: ${this.finalPath}`);
+                logger.success(`Average speed: ${this.formatSpeed(this.downloadedBytes / elapsed)}`);
+                logger.success(`Total time: ${elapsed.toFixed(1)}s`);
+            }
+        } catch (error) {
+            if (this.fileFd) {
+                fs.closeSync(this.fileFd);
+            }
+            logger.error("Download failed:", error.message);
+            this.cleanup();
+            throw error;
         }
     }
 
     cleanup() {
-        if (this.interrupted && this.finalPath && fs.existsSync(this.finalPath)) {
+        if (this.interrupted && !this.completed && this.finalPath && fs.existsSync(this.finalPath)) {
             fs.unlinkSync(this.finalPath);
             logger.info("Download interrupted. Partial file deleted.");
         }
