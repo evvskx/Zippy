@@ -7,7 +7,6 @@ const logger = require("./logger");
 
 const CHUNK_SIZE = 2 * 1024 * 1024;
 const MAX_CONNECTIONS = 5;
-const PROGRESS_UPDATE_INTERVAL = 100;
 
 class WriteQueue {
     constructor(fd) {
@@ -41,7 +40,6 @@ class Downloader {
         this.totalBytes = 0;
         this.downloadedBytes = 0;
         this.startTime = Date.now();
-        this.lastUpdate = 0;
         this.lastProgressLength = 0;
         this.parsedUrl = new URL(this.url);
         this.isHttps = this.parsedUrl.protocol === 'https:';
@@ -50,7 +48,7 @@ class Downloader {
         this.interrupted = false;
         this.completed = false;
         this.chunkStatus = new Map();
-        
+        this.progressInterval = null;
         process.on('exit', () => this.cleanup());
         process.on('SIGINT', () => {
             this.interrupted = true;
@@ -113,7 +111,6 @@ class Downloader {
 
     formatETA(seconds) {
         if (!isFinite(seconds) || seconds < 0) return "∞";
-        
         const d = Math.floor(seconds / 86400);
         const h = Math.floor((seconds % 86400) / 3600);
         const m = Math.floor((seconds % 3600) / 60);
@@ -129,67 +126,35 @@ class Downloader {
     updateProgress() {
         const now = Date.now();
         const elapsed = (now - this.startTime) / 1000;
-        
         if (elapsed <= 0 || this.totalBytes <= 0) return;
-        
         const speed = this.downloadedBytes / elapsed;
         const percent = Math.min(1, this.downloadedBytes / this.totalBytes);
         const remaining = Math.max(0, this.totalBytes - this.downloadedBytes);
         const eta = speed > 0 ? remaining / speed : Infinity;
-        
         const barLength = 30;
         const filled = Math.min(barLength, Math.floor(percent * barLength));
         const bar = "=".repeat(filled) + " ".repeat(barLength - filled);
-        
         const percentText = (percent * 100).toFixed(1) + '% |';
         const progressText = `[${bar}] ${percentText} ${this.formatBytes(this.downloadedBytes)} / ${this.formatBytes(this.totalBytes)} | ${this.formatSpeed(speed)} | ETA: ${this.formatETA(eta)}`;
-        
         process.stdout.write('\r' + progressText + ' '.repeat(Math.max(0, (this.lastProgressLength || 0) - progressText.length)));
         this.lastProgressLength = progressText.length;
     }
 
     onProgressUpdate(bytes) {
         this.downloadedBytes += bytes;
-        if (this.downloadedBytes > this.totalBytes) {
-            this.downloadedBytes = this.totalBytes;
-        }
-        
-        const now = Date.now();
-        if (now - this.lastUpdate > PROGRESS_UPDATE_INTERVAL) {
-            this.updateProgress();
-            this.lastUpdate = now;
-        }
+        if (this.downloadedBytes > this.totalBytes) this.downloadedBytes = this.totalBytes;
     }
 
-    downloadChunk(start, end, retries = 3) {
+    async downloadChunk(start, end, retries = 3) {
         const chunkId = `${start}-${end}`;
-        
+        if (this.chunkStatus.has(chunkId)) return;
+        const options = { headers: { Range: `bytes=${start}-${end}`, 'Cache-Control': 'no-cache', 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36' } };
         return new Promise((resolve, reject) => {
-            if (this.chunkStatus.has(chunkId)) {
-                return resolve();
-            }
-            
-            const options = { 
-                headers: { 
-                    Range: `bytes=${start}-${end}`, 
-                    'Cache-Control': 'no-cache',
-                    'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'
-                } 
-            };
-            
             const req = this.getRequestModule().get(this.url, options, res => {
-                if (res.statusCode >= 400) {
-                    return reject(new Error(`HTTP ${res.statusCode} for chunk ${chunkId}`));
-                }
-                
+                if (res.statusCode >= 400) return reject(new Error(`HTTP ${res.statusCode} for chunk ${chunkId}`));
                 let receivedBytes = 0;
                 let chunks = [];
-                
-                res.on('data', chunk => {
-                    chunks.push(chunk);
-                    receivedBytes += chunk.length;
-                });
-                
+                res.on('data', chunk => { chunks.push(chunk); receivedBytes += chunk.length; });
                 res.on('end', async () => {
                     const expectedBytes = end - start + 1;
                     const tolerance = Math.min(1024, expectedBytes * 0.01);
@@ -204,12 +169,8 @@ class Downloader {
                             reject(err);
                         }
                     } else if (retries > 0) {
-                        logger.warn(`Chunk ${chunkId} short by ${expectedBytes - receivedBytes} bytes, retrying (${retries} left)`);
-                        setTimeout(() => {
-                            resolve(this.downloadChunk(start, end, retries - 1));
-                        }, 1000);
+                        setTimeout(() => resolve(this.downloadChunk(start, end, retries - 1)), 1000);
                     } else {
-                        logger.warn(`Chunk ${chunkId} incomplete but accepting (${receivedBytes}/${expectedBytes} bytes)`);
                         try {
                             const buffer = Buffer.concat(chunks);
                             await this.writeQueue.enqueue(buffer, start);
@@ -221,53 +182,44 @@ class Downloader {
                         }
                     }
                 });
-                
-                res.on('error', (err) => {
-                    if (retries > 0) {
-                        setTimeout(() => {
-                            resolve(this.downloadChunk(start, end, retries - 1));
-                        }, 1000);
-                    } else {
-                        reject(err);
-                    }
+                res.on('error', err => {
+                    if (retries > 0) setTimeout(() => resolve(this.downloadChunk(start, end, retries - 1)), 1000);
+                    else reject(err);
                 });
             });
-            
-            req.on('error', (err) => {
-                if (retries > 0) {
-                    setTimeout(() => {
-                        resolve(this.downloadChunk(start, end, retries - 1));
-                    }, 1000);
-                } else {
-                    reject(err);
-                }
+            req.on('error', err => {
+                if (retries > 0) setTimeout(() => resolve(this.downloadChunk(start, end, retries - 1)), 1000);
+                else reject(err);
             });
-            
             req.setTimeout(30000, () => {
                 req.destroy();
-                if (retries > 0) {
-                    setTimeout(() => {
-                        resolve(this.downloadChunk(start, end, retries - 1));
-                    }, 1000);
-                } else {
-                    reject(new Error(`Timeout for chunk ${chunkId}`));
-                }
+                if (retries > 0) setTimeout(() => resolve(this.downloadChunk(start, end, retries - 1)), 1000);
+                else reject(new Error(`Timeout for chunk ${chunkId}`));
             });
         });
+    }
+
+    startProgressInterval() {
+        this.progressInterval = setInterval(() => {
+            this.updateProgress();
+        }, 1000);
+    }
+
+    stopProgressInterval() {
+        if (this.progressInterval) {
+            clearInterval(this.progressInterval);
+            this.progressInterval = null;
+        }
     }
 
     async download() {
         try {
             const downloadsDir = path.join(process.cwd(), 'downloads');
             fs.mkdirSync(downloadsDir, { recursive: true });
-            
             const { length, acceptsRanges, filename } = await this.getHeaders();
-            
             this.totalBytes = length;
             this.filename = filename;
             this.finalPath = path.join(downloadsDir, this.filename);
-            
-            
             if (fs.existsSync(this.finalPath)) {
                 const stats = fs.statSync(this.finalPath);
                 if (Math.abs(stats.size - this.totalBytes) < 1024) {
@@ -278,53 +230,35 @@ class Downloader {
                     fs.unlinkSync(this.finalPath);
                 }
             }
-            
             this.fileFd = fs.openSync(this.finalPath, 'w');
             this.writeQueue = new WriteQueue(this.fileFd);
-            
+            this.startProgressInterval();
             if (!acceptsRanges || this.totalBytes < CHUNK_SIZE) {
                 await this.downloadChunk(0, this.totalBytes - 1);
             } else {
                 const chunks = [];
-                for (let i = 0; i < this.totalBytes; i += CHUNK_SIZE) {
-                    chunks.push([i, Math.min(i + CHUNK_SIZE - 1, this.totalBytes - 1)]);
-                }
-                
-
+                for (let i = 0; i < this.totalBytes; i += CHUNK_SIZE) chunks.push([i, Math.min(i + CHUNK_SIZE - 1, this.totalBytes - 1)]);
                 const active = [];
                 let chunkIndex = 0;
-                
                 while (chunkIndex < chunks.length && !this.interrupted) {
                     while (active.length < MAX_CONNECTIONS && chunkIndex < chunks.length) {
                         const [start, end] = chunks[chunkIndex++];
-                        const p = this.downloadChunk(start, end).finally(() => {
-                            const index = active.indexOf(p);
-                            if (index > -1) active.splice(index, 1);
-                        });
+                        const p = this.downloadChunk(start, end).finally(() => { const index = active.indexOf(p); if (index > -1) active.splice(index, 1); });
                         active.push(p);
                     }
-                    
-                    if (active.length > 0) {
-                        await Promise.race(active);
-                    }
+                    if (active.length > 0) await Promise.race(active);
                 }
-                
                 await Promise.all(active);
             }
-            
             fs.closeSync(this.fileFd);
-            
+            this.stopProgressInterval();
+            this.downloadedBytes = this.totalBytes;
+            this.updateProgress();
+            console.log("");
             if (!this.interrupted) {
-                this.downloadedBytes = this.totalBytes;
-                this.updateProgress();
-                console.log("");
-                
                 const stats = fs.statSync(this.finalPath);
                 const sizeDiff = Math.abs(stats.size - this.totalBytes);
-                if (sizeDiff > 1024) {
-                    logger.warn(`File size difference: ${sizeDiff} bytes (expected: ${this.totalBytes}, got: ${stats.size})`);
-                }
-                
+                if (sizeDiff > 1024) logger.warn(`File size difference: ${sizeDiff} bytes (expected: ${this.totalBytes}, got: ${stats.size})`);
                 this.completed = true;
                 const elapsed = (Date.now() - this.startTime) / 1000;
                 logger.success(`Download completed: ${this.finalPath}`);
@@ -332,9 +266,8 @@ class Downloader {
                 logger.success(`Total time: ${elapsed.toFixed(1)}s`);
             }
         } catch (error) {
-            if (this.fileFd) {
-                fs.closeSync(this.fileFd);
-            }
+            this.stopProgressInterval();
+            if (this.fileFd) fs.closeSync(this.fileFd);
             logger.error("Download failed:", error.message);
             this.cleanup();
             throw error;
